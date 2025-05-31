@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: Run Tests on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Make all scripts executable
+        run: find .ci/scripts -type f -name "*.sh" -exec chmod +x {} \;
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.27.4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install MacOS dependencies
+        if: matrix.platform == 'macos'
+        run: |
+          brew install clang-format
+          brew install swift-format
+      - name: prepare tool
+        run: .ci/scripts/prepare_tool.sh
+      - name: download Dart deps
+        run: .ci/scripts/tool_runner.sh fetch-deps
+      - name: tool format
+        run: .ci/scripts/plugin_tools_format.sh
+      - name: format
+        run: .ci/scripts/tool_runner.sh format --fail-on-change --no-swift
+      # TODO(feduke-nukem): re-enable when we are ready for it  
+      # - name: pubspec validation
+      #   run: .ci/scripts/tool_runner.sh pubspec-check --min-min-flutter-version=3.27.0 --allow-dependencies=script/configs/allowed_unpinned_deps.yaml --allow-pinned-dependencies=script/configs/allowed_pinned_deps.yaml
+
+
+      # - name: Install dependencies
+      #   run: |
+      #     for dir in $(find . -name pubspec.yaml -exec dirname {} \;); do
+      #       echo "Running flutter pub get in $dir"
+      #       (cd "$dir" && flutter pub get)
+      #     done
+
+      # - name: build examples (Win32)
+      #   if: matrix.platform == 'windows'
+      #   run: .ci/scripts/build_examples_win32.sh
+      - name: Setup Windows build environment
+        if: matrix.platform == 'windows'
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install visualstudio2019community --package-parameters "--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended" -y
+          .ci/scripts/build_examples_win32.sh
+        env:
+          MSVC_PATH: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC\\Tools\\MSVC\\14.29.30133\\bin\\Hostx64\\x64"
+        # working-directory: packages/golub
+        
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build curl
+        shell: bash
+      - name: Set up Java
+        if: matrix.platform == 'linux'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Build Linux examples
+        if: matrix.platform == 'linux'
+        run: .ci/scripts/tool_runner.sh build-examples --linux
+      - name: Setup Android emulator
+        if: matrix.platform == 'linux'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          profile: pixel_4
+          script: |
+            adb wait-for-device
+            dart run tool/run_tests.dart
+          working-directory: packages/golub
+
+
+      - name: MacOS updates pods repo
+        if: matrix.platform == 'macos'
+        run: .ci/scripts/update_pods.sh
+      - name: MacOS swift format
+        if: matrix.platform == 'macos'
+        run: .ci/scripts/tool_runner.sh format --fail-on-change --no-dart --no-clang-format --no-kotlin --no-java
+      - name: MacOS setup iOS simulator
+        if: matrix.platform == 'macos'
+        run: |
+          .ci/scripts/create_simulator.sh
+          .ci/scripts/boot_simulator.sh
+
+
+      - name: Run tests
+        if: matrix.platform != 'linux'
+        run: dart run tool/run_tests.dart
+        working-directory: packages/golub
+
+
+      - name: Shutdown iOS simulator
+        if: matrix.platform == 'macos'
+        run: .ci/scripts/remove_simulator.sh
+        continue-on-error: true
+
+
+          # cd platform_tests/test_plugin/example/windows
+          # cmake -S . -B build -G "Visual Studio 16 2019" -A x64
