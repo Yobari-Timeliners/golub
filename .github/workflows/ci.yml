@@ -106,7 +106,7 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
-          - os: windows-2019
+          - os: windows-2022
             platform: windows
       fail-fast: false
     steps:
@@ -140,6 +140,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           choco install llvm --version=15.0.7 --force -y
+          choco install visualstudio2019buildtools --package-parameters "--allWorkloads --includeRecommended --includeOptional --passive --locale en-US"
 
       - name: Set up Java
         if: matrix.platform == 'linux' || matrix.platform == 'windows'
@@ -147,7 +148,17 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      
+      - name: Add MSBuild to PATH
+        if: matrix.platform == 'windows'
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
+      - name: Set up MSVC Developer Command Prompt
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: 14.0
+          vsversion: 2019
 
       - name: prepare tool
         run: .ci/scripts/prepare_tool.sh
